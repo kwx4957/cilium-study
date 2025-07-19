@@ -21,8 +21,6 @@ eBPF 프로그램이 이벤트 기반으로 동작하기 때문이다. 커널 �
 ![c](https://cilium.io/static/7b77faac1700b51b5612abb7ec0c8f40/0bb32/ebpf_hostrouting.png)
 
 ### Cilium 설치
-만일 기존에 CNI가 설치되어 있다면 다음 과정을 수행해야 한다. CNI가 설치되어 있지 않다면 바로 cilium 설치로 넘어가도 된다. flannel이 생성한 기존 리소스를 제거해야 cilium이 정상적으로 동작한다. 
-
 Cilium을 활용하기 위해서는 여러 요구 사항을 충족해야 한다.
 
 **권한** 
@@ -129,6 +127,8 @@ iptables-save
 
 # 기존에 flannel가 IP를 할당한 파드에 대해서 재시작함으로써 새롭게 ip를 할당해야 한다.
 ```
+
+만일 기존에 CNI가 설치되어 있다면 다음 과정을 수행해야 한다. CNI가 설치되어 있지 않다면 바로 cilium 설치로 넘어가도 된다. flannel이 생성한 기존 리소스를 제거해야 cilium이 정상적으로 동작한다. 
 
 **Cilium 배포**
 ```sh
@@ -351,6 +351,113 @@ Data Store
 - etcd(Key-Value Store)
   - k8s CRD로 충분하지만 키-값 저장소를 사용한다면 더욱 효율적으로 클러스터를 확장할 수 있다.
 
+### 파드 정보 조회
+```sh
+# 단축키 지정
+export CILIUMPOD0=$(kubectl get -l k8s-app=cilium pods -n kube-system --field-selector spec.nodeName=k8s-ctr -o jsonpath='{.items[0].metadata.name}')
+export CILIUMPOD1=$(kubectl get -l k8s-app=cilium pods -n kube-system --field-selector spec.nodeName=k8s-w1  -o jsonpath='{.items[0].metadata.name}')
+export CILIUMPOD2=$(kubectl get -l k8s-app=cilium pods -n kube-system --field-selector spec.nodeName=k8s-w2  -o jsonpath='{.items[0].metadata.name}')
+echo $CILIUMPOD0 $CILIUMPOD1 $CILIUMPOD2
+
+alias c0="kubectl exec -it $CILIUMPOD0 -n kube-system -c cilium-agent -- cilium"
+alias c1="kubectl exec -it $CILIUMPOD1 -n kube-system -c cilium-agent -- cilium"
+alias c2="kubectl exec -it $CILIUMPOD2 -n kube-system -c cilium-agent -- cilium"
+
+alias c0bpf="kubectl exec -it $CILIUMPOD0 -n kube-system -c cilium-agent -- bpftool"
+alias c1bpf="kubectl exec -it $CILIUMPOD1 -n kube-system -c cilium-agent -- bpftool"
+alias c2bpf="kubectl exec -it $CILIUMPOD2 -n kube-system -c cilium-agent -- bpftool"
+
+
+
+kubectl get pod -owide
+kubectl get svc,ep my-nginx
+NAME                        READY   STATUS    RESTARTS   AGE     IP             NODE      NOMINATED NODE   READINESS GATES
+curl-pod                    1/1     Running   0          3h4m    172.20.2.23    k8s-ctr   <none>           <none>
+my-nginx-77b9c67898-8h7nr   1/1     Running   0          71m     172.20.0.221   k8s-w2    <none>           <none>
+my-nginx-77b9c67898-bmk4c   1/1     Running   0          71m     172.20.0.213   k8s-w2    <none>           <none>
+my-nginx-77b9c67898-dhffh   1/1     Running   0          3h31m   172.20.0.218   k8s-w2    <none>           <none>
+webpod-697b545f57-mbghv     1/1     Running   0          99m     172.20.1.99    k8s-w1    <none>           <none>
+webpod-697b545f57-vfrr9     1/1     Running   0          99m     172.20.0.247   k8s-w2    <none>           <none>
+
+# BPF maps 조회
+# 목적지 파드에 대한 tunnelendpoint. 즉 노드 IP가 있는것을 확인할 수 있다. 신기한 점은 동일한 노드의 경우에는 tunnelendpoint가 0.0.0.0이며, 노드에 대한 정보도 0.0.0.0이다. 
+c2 map get cilium_ipcache
+Key                 Value                                                                    State   Error
+172.20.1.230/32     identity=6 encryptkey=0 tunnelendpoint=192.168.10.101 flags=<none>       sync
+172.20.2.23/32      identity=21894 encryptkey=0 tunnelendpoint=192.168.10.100 flags=<none>   sync
+172.20.2.242/32     identity=4 encryptkey=0 tunnelendpoint=192.168.10.100 flags=<none>       sync
+0.0.0.0/0           identity=2 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>              sync
+172.20.1.99/32      identity=19327 encryptkey=0 tunnelendpoint=192.168.10.101 flags=<none>   sync
+172.20.0.21/32      identity=34931 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>          sync
+172.20.0.200/32     identity=4 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>              sync
+172.20.2.221/32     identity=6 encryptkey=0 tunnelendpoint=192.168.10.100 flags=<none>       sync
+192.168.10.101/32   identity=6 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>              sync
+172.20.0.156/32     identity=34931 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>          sync
+10.0.2.15/32        identity=1 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>              sync
+172.20.0.247/32     identity=19327 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>          sync
+172.20.0.221/32     identity=7617 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>           sync
+172.20.0.218/32     identity=7617 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>           sync
+172.20.1.184/32     identity=4 encryptkey=0 tunnelendpoint=192.168.10.101 flags=<none>       sync
+192.168.10.100/32   identity=7 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>              sync
+172.20.0.92/32      identity=1 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>              sync
+192.168.10.102/32   identity=1 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>              sync
+172.20.0.213/32     identity=7617 encryptkey=0 tunnelendpoint=0.0.0.0 flags=<none>           sync
+
+# 목적지 파드에 대한 정보가 조회가 가능하다.
+# c0 노드의 파드가 요청을 보낸다면 tunnelendpoint=192.168.10.102으로 패킷을 전달하게 된다.
+c0 map get cilium_ipcache |grep 172.20.0.221
+172.20.0.221/32     identity=7617 encryptkey=0 tunnelendpoint=192.168.10.102 flags=<none>    sync
+
+# bpf 네트워크 인터페이스 조회 
+# 여기서 lxc016a899bb2f4는 curl 파드이다.
+c0bpf net show
+xdp:
+tc:
+eth0(2) tcx/ingress cil_from_netdev prog_id 1975 link_id 16
+eth0(2) tcx/egress cil_to_netdev prog_id 1973 link_id 17
+eth1(3) tcx/ingress cil_from_netdev prog_id 1984 link_id 18
+eth1(3) tcx/egress cil_to_netdev prog_id 1982 link_id 19
+cilium_net(4) tcx/ingress cil_to_host prog_id 1963 link_id 15
+cilium_host(5) tcx/ingress cil_to_host prog_id 1937 link_id 13
+cilium_host(5) tcx/egress cil_from_host prog_id 1941 link_id 14
+lxc_health(13) tcx/ingress cil_from_container prog_id 1929 link_id 28
+lxc_health(13) tcx/egress cil_to_container prog_id 1916 link_id 29
+lxc016a899bb2f4(15) tcx/ingress cil_from_container prog_id 1998 link_id 30
+lxc016a899bb2f4(15) tcx/egress cil_to_container prog_id 2003 link_id 31
+
+# curl 파드의 ingress에 대한 맵 정보는 prog_id 1998, exgress에 대한 정보는 2003인 것을 확인할 수 있다.
+c0bpf net show | grep lxc016a899bb2f4
+lxc016a899bb2f4(15) tcx/ingress cil_from_container prog_id 1998 link_id 30
+lxc016a899bb2f4(15) tcx/egress cil_to_container prog_id 2003 link_id 31
+
+# bpftool prog show는 프로세스에 대한 정보를 비롯하여 추가적인 ebpf 정보도 제공한다. 
+# 이 중 map_ids인 312, 313, 35에 대해서 알아본다. 
+c0bpf prog show id 1998
+1998: sched_cls  name cil_from_container  tag 41989045bb171bee  gpl
+	loaded_at 2025-07-19T16:42:31+0000  uid 0
+	xlated 752B  jited 784B  memlock 4096B  map_ids 312,313,35
+	btf_id 667
+
+c0bpf prog show id 2003
+2003: sched_cls  name cil_to_container  tag 0b3125767ba1861c  gpl
+	loaded_at 2025-07-19T16:42:31+0000  uid 0
+	xlated 1448B  jited 1144B  memlock 4096B  map_ids 312,35,313
+	btf_id 672
+
+c0bpf map list | grep -e 35: -e 312: -e 313: -A2
+# CPU별 Cilium 성능 메트릭 수집
+35: percpu_hash  name cilium_metrics  flags 0x1
+	key 8B  value 16B  max_entries 1024  memlock 19024B
+# 정적인 구성 값에 읽기 전용 MAP
+312: array  name .rodata.config  flags 0x480
+	key 4B  value 64B  max_entries 1  memlock 8192B
+	btf_id 662  frozen
+# 다른 BPF 프로그램과 연동하기 위한 prog_array
+313: prog_array  name cilium_calls_00  flags 0x0
+	key 4B  value 4B  max_entries 50  memlock 720B
+	owner_prog_type sched_cls  owner jited
+```
 
 https://ebpf.io/ko-kr/what-is-ebpf/  
-https://docs.cilium.io/en/stable/gettingstarted/k8s-install-default/  
+https://docs.cilium.io/en/stable/gettingstarted/k8s-install-default/    
+https://cilium.isovalent.com/hubfs/marketing%20briefs/Isovalent%20-%20Cilium%20Cheat%20Sheet.pdf
