@@ -1,71 +1,3 @@
-## [Cilium 1기] 1주차 스터디
-```sh
-# VirtualBox 설치
-brew install --cask virtualbox
-
-VBoxManage --version
-7.1.10r169112
-
-# Vagrant 설치
-brew install --cask vagrant
-
-vagrant version    
-Installed Version: 2.4.7
-
-# VM 실행 
-vagrant up
-
-# 워커 노드 IP 변경 
-NODEIP=$(ip -4 addr show eth1 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-sed -i "s/^\(KUBELET_KUBEADM_ARGS=\"\)/\1--node-ip=${NODEIP} /" /var/lib/kubelet/kubeadm-flags.env
-systemctl daemon-reexec && systemctl restart kubelet
-
-# 리소스 삭제
-vagrant destroy -f && rm -rf .vagrant
-```
-
-https://docs.docker.com/engine/install/centos/  
-https://kubernetes.io/ko/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
-
-
-```sh
-# Native XDP 지원 NIC 조회
-# 지원 X 
-ethtool -i eth0
-driver: tg3
-version: 3.137
-firmware-version: FFV22.91.5 bc 5720-v1.39
-expansion-rom-version:
-bus-info: 0000:04:00.0
-supports-statistics: yes
-supports-test: yes
-supports-eeprom-access: yes
-supports-register-dump: yes
-supports-priv-flags: no
-```
-
-
-### 트러뷸슈팅
-1. rockylinux/9 변경시 
-지원되지 않는 아키텍처 문제 발생. 사용하는 이미지는 rockylinux/9에서 bentto/rockylinu/9으로 변경
-```sh
-vagrant up
-
-There was an error while executing `VBoxManage`, a CLI used by Vagrant
-for controlling VirtualBox. The command and stderr is shown below.
-
-Command: ["startvm", "a5a27bec-db2b-4546-b1bc-4c9796b8a07d", "--type", "headless"]
-
-Stderr: VBoxManage: error: The VM session was aborted
-VBoxManage: error: Details: code NS_ERROR_FAILURE (0x80004005), component SessionMachine, interface ISession
-
-Callee RC:
-VBOX_E_PLATFORM_ARCH_NOT_SUPPORTED (0x80bb0012)
-```
-https://github.com/hashicorp/vagrant/issues/13588
-
-
-
 ## [Cilium Study 1기] 1주차 정리
 > 본 내용은 CloudNet@ Cilium Study 1기 1주차 스터디에 대한 정리 글입니다. 
 
@@ -93,10 +25,10 @@ eBPF 프로그램이 이벤트 기반으로 동작하기 때문이다. 커널 �
 
 Cilium을 활용하기 위해서는 여러 요구 사항을 충족해야 한다.
 
-권한 
+**권한** 
 - CAP_SYS_ADMIN 요구
 
-마운트된 파일 시스템  
+**마운트된 파일 시스템**
 만일 마운트되어 있지 않더라도 cilium이 자동으로 마운트한다. 
 ```sh
 # 마운트 조회
@@ -108,24 +40,25 @@ vi /etc/fstab
 bpffs                      /sys/fs/bpf             bpf     defaults 0 0
 ```
 
-고급 기능에 필요한 커널 버전
-| Cilium Feature                                           | 섬모 기능 설명                                  | Minimum Kernel Version |
-|----------------------------------------------------------|--------------------------------------------------|------------------------|
-| WireGuard Transparent Encryption                         | WireGuard 투명 암호화                           | >= 5.6                 |
-| Full support for Session Affinity                        | Session Affinity에 대한 완벽한 지원              | >= 5.7                 |
-| BPF-based proxy redirection                              | BPF 기반 프록시 리디렉션                         | >= 5.7                 |
-| Socket-level LB bypass in pod netns                      | Pod netns의 소켓 수준 LB 우회                    | >= 5.7                 |
-| L3 devices                                               | L3 장치                                          | >= 5.8                 |
-| BPF-based host routing                                   | BPF 기반 호스트 라우팅                           | >= 5.10                |
-| Multicast Support in Cilium (Beta) (AMD64)               | Cilium(베타)의 멀티캐스트 지원 (AMD64)           | >= 5.10                |
-| IPv6 BIG TCP support                                     | IPv6 BIG TCP 지원                               | >= 5.19                |
-| Multicast Support in Cilium (Beta) (AArch64)             | Cilium(베타)의 멀티캐스트 지원 (AArch64)         | >= 6.0                 |
-| IPv4 BIG TCP support                                     | IPv4 BIG TCP 지원                               | >= 6.3                 |
+**고급 기능에 필요한 커널 버전**
+| Cilium Feature                                           | Minimum Kernel Version |
+|----------------------------------------------------------|-------------------------|
+| WireGuard Transparent Encryption                         | >= 5.6                  |
+| Full support for Session Affinity                        | >= 5.7                  |
+| BPF-based proxy redirection                              | >= 5.7                  |
+| Socket-level LB bypass in pod netns                      | >= 5.7                  |
+| L3 devices                                               | >= 5.8                  |
+| BPF-based host routing                                   | >= 5.10                 |
+| Multicast Support in Cilium (Beta) (AMD64)               | >= 5.10                 |
+| IPv6 BIG TCP support                                     | >= 5.19                 |
+| Multicast Support in Cilium (Beta) (AArch64)             | >= 6.0                  |
+| IPv4 BIG TCP support                                     | >= 6.3                  |
 
-컨테이너 이미지 실행 시 시스템 요구 사항
+**컨테이너 이미지 실행 시 시스템 요구 사항**
 - AMD64 또는 AArch64 아키텍처
 - 리눅스 커널 5.4 or 레드햇 계열의 경우 4.18
 
+**요구하는 커널 모듈**
 ```sh
 arch
 aarch64
