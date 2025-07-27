@@ -1,4 +1,4 @@
-## 1. Dynamic exporter configuration (hubble flow logs) 로 파일 출력 후 해당 파일을 수집하여 볼 수 있는 로깅 시스템 구성해보기
+## 1. Dynamic exporter configuration (hubble flow logs) 로 파일 출력 후 해당 파일을 수집하여 볼 수 있는 로깅 시스템 구성해보기(미완)
 
 구성 과정
 1. 로그 수집을 위한 otel-col 배포
