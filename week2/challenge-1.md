@@ -36,59 +36,37 @@ helm uninstall loki -n loki
 **loki-values.yaml**
 ```yaml
 loki:
-  commonConfig:
+  
+# This is a complete configuration to deploy Loki backed by the filesystem.
+# The index will be shipped to the storage via tsdb-shipper.
+  storage:
+    tpye: filesystem
+  auth_enabled: false
+
+  server:
+    http_listen_port: 3100
+
+  common:
+    ring:
+      instance_addr: 127.0.0.1
+      kvstore:
+        store: inmemory
     replication_factor: 1
-  schemaConfig:
+    path_prefix: /tmp/loki
+
+  schema_config:
     configs:
-      - from: "2024-04-01"
-        store: tsdb
-        object_store: s3
-        schema: v13
-        index:
-          prefix: loki_index_
-          period: 24h
-  pattern_ingester:
-      enabled: true
-  limits_config:
-    allow_structured_metadata: true
-    volume_enabled: true
-  ruler:
-    enable_api: true
+    - from: 2020-05-15
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
 
-minio:
-  enabled: true
-      
-deploymentMode: SingleBinary
-
-singleBinary:
-  replicas: 1
-
-# Zero out replica counts of other deployment modes
-backend:
-  replicas: 0
-read:
-  replicas: 0
-write:
-  replicas: 0
-
-ingester:
-  replicas: 0
-querier:
-  replicas: 0
-queryFrontend:
-  replicas: 0
-queryScheduler:
-  replicas: 0
-distributor:
-  replicas: 0
-compactor:
-  replicas: 0
-indexGateway:
-  replicas: 0
-bloomCompactor:
-  replicas: 0
-bloomGateway:
-  replicas: 0
+  storage_config:
+    filesystem:
+      directory: /tmp/loki/chunks
 ```
 
 **storage-class.yaml**
@@ -103,7 +81,7 @@ volumeBindingMode: WaitForFirstConsumer
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: export-0-loki-minio-0
+  name: storage-loki-0
   namespace: loki
 spec:
   accessModes:
