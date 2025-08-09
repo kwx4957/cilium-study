@@ -1,4 +1,4 @@
-## 6. Target 에 대한 문제를 해결해서 정상 수집하게 하고, Cilium 제공 그라파나 대시보드 
+## 6. Target 에 대한 문제 해결
 helm 차트로 배포한 프로메테우스가 어떤 자원을 생성하는지 확인하고, kube-controll-manager, kube-proxy, sceduler, etcd등 수집하지 못하는 리소스에 대해서 메트릭을 수집하자 
 
 ```sh
@@ -32,18 +32,23 @@ prometheus-windows-exporter:
     monitor:
       enabled: false
 EOT
+```
 
-# prometheus 배포 
+prometheus 배포 
+```sh
 helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack --version 75.15.1 \
 -f monitor-values.yaml --create-namespace --namespace monitoring
 
 helm list -n monitoring
 kube-prometheus-stack	monitoring	1       	2025-08-10 02:17:46.638383982 +0900 KST	deployed	kube-prometheus-stack-75.15.1	v0.83.0
 
-# promtheus 리소스 전부 조회
+promtheus 리소스 전부 조회
+```sh
 k get all -n monitoring
+```
 
-# k8s 컴포넌트에 대해서 기본적으로 수집되는 서비스 모니터 확인
+k8s 컴포넌트에 대해서 기본적으로 수집되는 서비스모니터 확인
+```sh
 k get prometheus,servicemonitors -n monitoring
 NAME                                                                VERSION   DESIRED   READY   RECONCILED   AVAILABLE   AGE
 prometheus.monitoring.coreos.com/kube-prometheus-stack-prometheus   v3.5.0    1         1       True         True        19m
@@ -82,7 +87,15 @@ prometheus, version 3.5.0 (branch: HEAD, revision: 8be3a9560fbdd18a94dedec4b747c
   go version:       go1.24.5
   platform:         linux/arm64
   tags:             netgo,builtinassets
+```
 
+메트릭을 수집하지 못하는 컴포넌트
+- kube-controller-manager 
+- kube-scheduler
+- etcd
+- kube-proxy
+
+```sh
 # kube-prometheus-stack-kube-controller-manager 서비스 모니터 설정 확인 
 k describe servicemonitors.monitoring.coreos.com -n monitoring kube-prometheus-stack-kube-controller-manager
 Name:         kube-prometheus-stack-kube-controller-manager
@@ -160,7 +173,8 @@ spec:
       app: kube-prometheus-stack-kube-controller-manager
       release: kube-prometheus-stack
 
-# kube-prometheus-stack-kube-controller-manager 설정을 확인한 결과 프로메테우스가 메트릭을 수집하기 위해서 포트가 열려있어야 하는데 로컬로 구성이 되어있어서 메트릭을 수집하지 못한다.
+# kube-prometheus-stack-kube-controller-manager 설정을 확인한 결과
+# 프로메테우스가 메트릭을 수집하기 위해서 포트가 열려있어야 하는데 로컬로 구성이 되어있어서 메트릭을 수집하지 못한다.
 k -n kube-system get pods -l component=kube-controller-manager -o yaml | grep -E -- '--secure-port|--bind-address|--authentication'
       - --authentication-kubeconfig=/etc/kubernetes/controller-manager.conf
       - --bind-address=127.0.0.1
@@ -196,6 +210,3 @@ ss -tnlp |grep proxy
 LISTEN 0      4096                *:10249            *:*    users:(("kube-proxy",pid=36912,fd=11))
 LISTEN 0      4096                *:10256            *:*    users:(("kube-proxy",pid=36912,fd=10))
 ```
-
-https://github.com/cilium/cilium/tree/main/examples/kubernetes/addons/prometheus/files/grafana-dashboards
-https://grafana.com/grafana/dashboards/?search=cilium
