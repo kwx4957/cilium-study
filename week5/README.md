@@ -378,11 +378,533 @@ termshark -r /tmp/bgp.pcap
 # 확인 못했음
 # cilium bgp routes
 # ip -c route
+
+
+# 특정 노드의 유지 보수할 경우
+k drain k8s-w0 --ignore-daemonsets
+k label nodes k8s-w0 enable-bgp=false --overwrite
+k get node
+k8s-ctr   Ready                      control-plane   8m44s   v1.33.2
+k8s-w0    Ready,SchedulingDisabled   <none>          4m41s   v1.33.2
+k8s-w1    Ready                      <none>          6m56s   v1.33.2
+
+# bgp를 전파하는 k8s-w0 노드가 제거되었다.
+k get ciliumbgpnodeconfigs
+k8s-ctr   119s
+k8s-w1    119s
+
+cilium bgp routes
+Node      VRouter   Prefix          NextHop   Age     Attrs
+k8s-ctr   65001     172.20.0.0/24   0.0.0.0   2m31s   [{Origin: i} {Nexthop: 0.0.0.0}]
+k8s-w1    65001     172.20.1.0/24   0.0.0.0   2m31s   [{Origin: i} {Nexthop: 0.0.0.0}]
+
+cilium bgp peers
+Node      Local AS   Peer AS   Peer Address     Session State   Uptime   Family         Received   Advertised
+k8s-ctr   65001      65000     192.168.10.200   established     2m41s    ipv4/unicast   3          2
+k8s-w1    65001      65000     192.168.10.200   established     2m42s    ipv4/unicast   3          2
+
+# 복구 
+k label nodes k8s-w0 enable-bgp=true --overwrite
+k uncordon k8s-w0
+
+# 파드 재준배
+kubectl scale deployment webpod --replicas 0
+kubectl scale deployment webpod --replicas 3
+
+# 튜닝 가이드 
+# https://docs.cilium.io/en/stable/network/bgp-control-plane/bgp-control-plane-operation/#disabling-crd-status-report
+# 대규모 클러스터인 경우 api-server에 부하를 유발할수 있기 때문에  bgp status reporting off  설정을 꺼준다
+k get ciliumbgpnodeconfigs -o yaml | yq
+
+helm upgrade cilium cilium/cilium --version 1.18.0 --namespace kube-system --reuse-values \
+  --set bgpControlPlane.statusReport.enabled=false
+
+k -n kube-system rollout restart ds/cilium
+      "status": {}
 ```
 
-중요한 것은 bgp가
+
+![](https://cdn.sanity.io/images/xinsvxfu/production/3afbdce3468cab319c89ae2597fe2f35e1a23e0d-2112x1008.png?auto=format&q=80&fit=clip&w=2560)
+
+로드밸랜서 IP로 BGP 광고
+```sh
+# BGP로 SVC IBPM을 광고하기 떄문에 노드의 네트워크 대역대가 아니더라도 통신이 가능하다.
+cat << EOF | kubectl apply -f -
+apiVersion: "cilium.io/v2"
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: "cilium-pool"
+spec:
+  allowFirstLastIPs: "No"
+  blocks:
+  - cidr: "172.16.1.0/24"
+EOF
+
+k get ippool
+NAME          DISABLED   CONFLICTING   IPS AVAILABLE   AGE
+cilium-pool   false      False         254             53s
+
+# 기존 서비스 타입 변경 
+k patch svc webpod -p '{"spec": {"type": "LoadBalancer"}}'
+service/webpod patched
+
+k get svc webpod
+NAME     TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+webpod   LoadBalancer   10.96.121.166   172.16.1.1    80:32759/TCP   13m
+
+k get ippool
+NAME          DISABLED   CONFLICTING   IPS AVAILABLE   AGE
+cilium-pool   false      False         253             76s
+
+kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg service list
+16   172.16.1.1:80/TCP       LoadBalancer   1 => 172.20.0.10:80/TCP (active)
+                                            2 => 172.20.1.252:80/TCP (active)
+                                            3 => 172.20.2.200:80/TCP (active)
+
+k describe svc webpod | grep 'Traffic Policy'
+External Traffic Policy:  Cluster
+Internal Traffic Policy:  Cluster
+
+# 네트워크 욫어 조회
+k get svc webpod -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+LBIP=$(kubectl get svc webpod -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl -s $LBIP
+
+# LB ip bgp를 통한 광고
+# Service 유형의, LoadBalancerIP를, webpod과 일치하는 리소스를 전파한다.
+cat << EOF | kubectl apply -f -
+apiVersion: cilium.io/v2
+kind: CiliumBGPAdvertisement
+metadata:
+  name: bgp-advertisements-lb-exip-webpod
+  labels:
+    advertise: bgp
+spec:
+  advertisements:
+    - advertisementType: "Service"
+      service:
+        addresses:
+          - LoadBalancerIP
+      selector:             
+        matchExpressions:
+          - { key: app, operator: In, values: [ webpod ] }
+EOF
+
+k get CiliumBGPAdvertisement
+NAME                                AGE
+bgp-advertisements                  14m
+bgp-advertisements-lb-exip-webpod   21s
+
+# bgp 라우트 정책 조회. 
+k exec -it -n kube-system ds/cilium -- cilium-dbg bgp route-policies
+VRouter   Policy Name                                             Type     Match Peers         Match Families   Match Prefixes (Min..Max Len)   RIB Action   Path Actions
+65001     allow-local                                             import                                                                        accept
+65001     tor-switch-ipv4-PodCIDR                                 export   192.168.10.200/32                    172.20.1.0/24 (24..24)          accept
+65001     tor-switch-ipv4-Service-webpod-default-LoadBalancerIP   export   192.168.10.200/32                    172.16.1.1/32 (32..32)          accept
+
+cilium bgp routes available ipv4 unicast
+Node      VRouter   Prefix          NextHop   Age     Attrs
+k8s-ctr   65001     172.16.1.1/32   0.0.0.0   2m21s   [{Origin: i} {Nexthop: 0.0.0.0}]
+          65001     172.20.0.0/24   0.0.0.0   8m36s   [{Origin: i} {Nexthop: 0.0.0.0}]
+k8s-w0    65001     172.16.1.1/32   0.0.0.0   2m20s   [{Origin: i} {Nexthop: 0.0.0.0}]
+          65001     172.20.2.0/24   0.0.0.0   8m48s   [{Origin: i} {Nexthop: 0.0.0.0}]
+k8s-w1    65001     172.16.1.1/32   0.0.0.0   2m20s   [{Origin: i} {Nexthop: 0.0.0.0}]
+          65001     172.20.1.0/24   0.0.0.0   8m48s   [{Origin: i} {Nexthop: 0.0.0.0}]
 
 
+# router
+# 로드밸런서에 대한 라우트 정보가 생겨났다.
+ip -c addr 
+172.16.1.1 nhid 38 proto bgp metric 20
+	nexthop via 192.168.20.100 dev eth2 weight 1
+	nexthop via 192.168.10.101 dev eth1 weight 1
+	nexthop via 192.168.10.100 dev eth1 weight 1
+
+vtysh -c 'show ip bgp'
+*> 172.16.1.1/32    192.168.10.100                         0 65001 i
+*=                  192.168.20.100                         0 65001 i
+*=                  192.168.10.101                         0 65001 i
+
+vtysh -c 'show ip bgp 172.16.1.1/32'
+BGP routing table entry for 172.16.1.1/32, version 7
+Paths: (3 available, best #1, table default)
+  Advertised to non peer-group peers:
+  192.168.10.100 192.168.10.101 192.168.20.100
+  65001
+    192.168.10.100 from 192.168.10.100 (192.168.10.100)
+      Origin IGP, valid, external, multipath, best (Router ID)
+      Last update: Sun Aug 17 05:30:56 2025
+  65001
+    192.168.20.100 from 192.168.20.100 (192.168.20.100)
+      Origin IGP, valid, external, multipath
+      Last update: Sun Aug 17 05:30:56 2025
+  65001
+    192.168.10.101 from 192.168.10.101 (192.168.10.101)
+      Origin IGP, valid, external, multipath
+      Last update: Sun Aug 17 05:30:56 2025
+
+for i in {1..100};  do curl -s $LBIP | grep Hostname; done | sort | uniq -c | sort -nr
+     41 Hostname: webpod-697b545f57-vgjgx
+     30 Hostname: webpod-697b545f57-4nt47
+     29 Hostname: webpod-697b545f57-9jsmh
+
+
+k scale deployment webpod --replicas 2
+k get pod -o wide
+webpod-697b545f57-4nt47   1/1     Running   0          16m   172.20.2.200   k8s-w0    <none>           <none>
+webpod-697b545f57-9jsmh   1/1     Running   0          16m   172.20.1.252   k8s-w1
+
+# 파드의 개수가 줄어들었으나 전파하는 노드의 정보는 동일하다
+cilium bgp routes
+Node      VRouter   Prefix          NextHop   Age      Attrs
+k8s-ctr   65001     172.16.1.1/32   0.0.0.0   6m28s    [{Origin: i} {Nexthop: 0.0.0.0}]
+          65001     172.20.0.0/24   0.0.0.0   12m43s   [{Origin: i} {Nexthop: 0.0.0.0}]
+k8s-w0    65001     172.16.1.1/32   0.0.0.0   6m27s    [{Origin: i} {Nexthop: 0.0.0.0}]
+          65001     172.20.2.0/24   0.0.0.0   12m55s   [{Origin: i} {Nexthop: 0.0.0.0}]
+k8s-w1    65001     172.16.1.1/32   0.0.0.0   6m27s    [{Origin: i} {Nexthop: 0.0.0.0}]
+          65001     172.20.1.0/24   0.0.0.0   12m55s   [{Origin: i} {Nexthop: 0.0.0.0}]
+
+
+# externalTrafficPolicy를 Local로 변경한 결과. webpod가 있는 노드에 대해서만 전파한다
+k patch service webpod -p '{"spec":{"externalTrafficPolicy":"Local"}}'
+
+# Router
+vtysh -c 'show ip bgp'
+*= 172.16.1.1/32    192.168.20.100                         0 65001 i
+*>                  192.168.10.101                         0 65001 i
+vtysh -c 'show ip bgp 172.16.1.1/32'
+vtysh -c 'show ip route bgp'
+ip -c r
+172.16.1.1 nhid 42 proto bgp metric 20
+	nexthop via 192.168.20.100 dev eth2 weight 1
+	nexthop via 192.168.10.101 dev eth1 weight 1
+
+# 반복 접근
+# 동일한 노드에 대해서만 접근한다.
+LBIP=172.16.1.1
+curl -s $LBIP
+for i in {1..100};  do curl -s $LBIP | grep Hostname; done | sort | uniq -c | sort -nr
+while true; do curl -s $LBIP | egrep 'Hostname|RemoteAddr' ; sleep 0.1; done
+Hostname: webpod-697b545f57-9jsmh
+RemoteAddr: 192.168.20.200:33968
+Hostname: webpod-697b545f57-9jsmh
+RemoteAddr: 192.168.20.200:33984
+
+
+# Router
+# 리눅스 커널은 L3로 라우트한다. 만일 정교한 ip + port로 전달하고 한다면 fib_multipath_hash_policy를 설정한다.
+sudo sysctl -w net.ipv4.fib_multipath_hash_policy=1
+echo "net.ipv4.fib_multipath_hash_policy=1" >> /etc/sysctl.conf
+
+for i in {1..100};  do curl -s $LBIP | grep Hostname; done | sort | uniq -c | sort -nr
+     53 Hostname: webpod-697b545f57-4nt47
+     47 Hostname: webpod-697b545f57-9jsmh
+
+# k8s-ctr
+k scale deployment webpod --replicas 3
+k get pod -owide
+
+# Router
+ip -c r
+172.16.1.1 nhid 47 proto bgp metric 20
+	nexthop via 192.168.20.100 dev eth2 weight 1
+	nexthop via 192.168.10.101 dev eth1 weight 1
+	nexthop via 192.168.10.100 dev eth1 weight 1
+for i in {1..100};  do curl -s $LBIP | grep Hostname; done | sort | uniq -c | sort -nr
+     36 Hostname: webpod-697b545f57-4nt47
+     33 Hostname: webpod-697b545f57-9jsmh
+     31 Hostname: webpod-697b545f57-2nvcv
+```
+
+네트워크 인입 종류
+- **BGP**(ECMP) + Service(LB EX-IP, ExternalTrafficPolicy:**Local**) + **SNAT** + **Random** 권장 방식 
+- **BGP**(ECMP) + Service(LB EX-IP, ExternalTrafficPolicy:**Cluster**) + **DSR** + **Maglev** 비권장 방식
+
+```sh
+# 설정 조회
+k exec -it -n kube-system ds/cilium -- cilium status --verbose
+  Mode:                 SNAT
+  Backend Selection:    Random
+  Session Affinity:     Enabled
+
+# geneve 적용
+modprobe geneve # modprobe geneve
+lsmod | grep -E 'vxlan|geneve'
+
+# 워커 노드 geneve 적용
+for i in w1 w0 ; do echo ">> node : k8s-$i <<"; sshpass -p 'vagrant' ssh vagrant@k8s-$i sudo modprobe geneve ; echo; done
+for i in w1 w0 ; do echo ">> node : k8s-$i <<"; sshpass -p 'vagrant' ssh vagrant@k8s-$i sudo lsmod | grep -E 'vxlan|geneve' ; echo; done
+
+# 
+helm upgrade cilium cilium/cilium --version 1.18.0 --namespace kube-system --reuse-values \
+  --set tunnelProtocol=geneve --set loadBalancer.mode=dsr --set loadBalancer.dsrDispatch=geneve \
+  --set loadBalancer.algorithm=maglev
+
+k -n kube-system rollout restart ds/cilium
+
+kubectl exec -it -n kube-system ds/cilium -- cilium status --verbose |grep -E 'geneve|Maglev|DSR'
+  Mode:                  DSR
+    DSR Dispatch Mode:   Geneve
+  Backend Selection:     Maglev (Table Size: 16381
+
+kubectl patch svc webpod -p '{"spec":{"externalTrafficPolicy":"Cluster"}}'
+
+# 모든 k8s 노드 실행
+tcpdump -i eth1 -w /tmp/dsr.pcap
+
+# router
+curl -s $LBIP
+
+# Hosts
+vagrant plugin install vagrant-scp
+vagrant scp k8s-ctr:/tmp/dsr.pcap .
+```
+
+노드별 입입 구성 
+```sh
+# 노드별 라베 그룹화
+kubectl label nodes k8s-ctr k8s-w1 az1=true
+kubectl label nodes k8s-w0         az2=true
+
+# 확인
+kubectl get node -l az1=true
+kubectl get node -l az2=true
+
+# 새 서비스 배포 
+cat << EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netshoot-web
+  labels:
+    app: netshoot-web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: netshoot-web
+  template:
+    metadata:
+      labels:
+        app: netshoot-web
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: netshoot
+          image: nicolaka/netshoot
+          ports:
+            - containerPort: 8080
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command: ["sh", "-c"]
+          args:
+            - |
+              while true; do 
+                { echo -e "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nOK from \$POD_NAME"; } | nc -l -p 8080 -q 1;
+              done
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netshoot-web
+  labels:
+    app: netshoot-web
+spec:
+  type: LoadBalancer
+  selector:
+    app: netshoot-web
+  ports:
+    - name: http
+      port: 80      
+      targetPort: 8080
+EOF
+
+kubectl get svc,ep netshoot-web
+kubectl get ippool
+
+# Router 
+# 라우팅 정보가 전부 삭제된다
+watch "vtysh -c 'show ip route bgp'"
+
+# 기존 BGP 설정 제거
+k delete ciliumbgpadvertisements,ciliumbgppeerconfigs,ciliumbgpclusterconfigs --all
+
+# 새 서비스 배포 
+cat << EOF | kubectl apply -f -
+apiVersion: cilium.io/v2
+kind: CiliumBGPAdvertisement
+metadata:
+  name: service1-bgp-advertisements
+  labels:
+    advertise: service1-bgp
+spec:
+  advertisements:
+    - advertisementType: "PodCIDR"
+    - advertisementType: "Service"
+      service:
+        addresses:
+          - LoadBalancerIP
+      selector:             
+        matchExpressions:
+          - { key: az1, operator: In, values: [ "true" ] }
+---
+apiVersion: cilium.io/v2
+kind: CiliumBGPPeerConfig
+metadata:
+  name: service1-cilium-peer
+spec:
+  timers:
+    holdTimeSeconds: 9
+    keepAliveTimeSeconds: 3
+  ebgpMultihop: 2
+  gracefulRestart:
+    enabled: true
+    restartTimeSeconds: 15
+  families:
+    - afi: ipv4
+      safi: unicast
+      advertisements:
+        matchLabels:
+          advertise: service1-bgp
+---
+apiVersion: cilium.io/v2
+kind: CiliumBGPClusterConfig
+metadata:
+  name: service1-cilium-bgp
+spec:
+  nodeSelector:
+    matchLabels:
+      "az1": "true"
+  bgpInstances:
+  - name: "instance-65001"
+    localASN: 65001
+    peers:
+    - name: "tor-switch"
+      peerASN: 65000
+      peerAddress: 192.168.10.200  # router ip address
+      peerConfigRef:
+        name: "service1-cilium-peer"
+EOF
+
+# 라우터
+watch "vtysh -c 'show ip route bgp'"
+B>* 172.20.0.0/24 [20/0] via 192.168.10.100, eth1, weight 1, 00:00:56
+B>* 172.20.1.0/24 [20/0] via 192.168.10.101, eth1, weight 1, 00:00:56
+
+# 라벨 추가
+kubectl label service webpod az1=true
+
+watch "vtysh -c 'show ip route bgp'"
+B>* 172.16.1.1/32 [20/0] via 192.168.10.100, eth1, weight 1, 00:00:11
+  *                      via 192.168.10.101, eth1, weight 1, 00:00:11
+B>* 172.20.0.0/24 [20/0] via 192.168.10.100, eth1, weight 1, 00:01:38
+B>* 172.20.1.0/24 [20/0] via 192.168.10.101, eth1, weight 1, 00:01:38
+
+# 서비스 2 배포 
+cat << EOF | kubectl apply -f -
+apiVersion: cilium.io/v2
+kind: CiliumBGPAdvertisement
+metadata:
+  name: service2-bgp-advertisements
+  labels:
+    advertise: service2-bgp
+spec:
+  advertisements:
+    - advertisementType: "PodCIDR"
+    - advertisementType: "Service"
+      service:
+        addresses:
+          - LoadBalancerIP
+      selector:             
+        matchExpressions:
+          - { key: az2, operator: In, values: [ "true" ] }
+---
+apiVersion: cilium.io/v2
+kind: CiliumBGPPeerConfig
+metadata:
+  name: service2-cilium-peer
+spec:
+  timers:
+    holdTimeSeconds: 9
+    keepAliveTimeSeconds: 3
+  ebgpMultihop: 2
+  gracefulRestart:
+    enabled: true
+    restartTimeSeconds: 15
+  families:
+    - afi: ipv4
+      safi: unicast
+      advertisements:
+        matchLabels:
+          advertise: service2-bgp
+---
+apiVersion: cilium.io/v2
+kind: CiliumBGPClusterConfig
+metadata:
+  name: service2-cilium-bgp
+spec:
+  nodeSelector:
+    matchLabels:
+      "az2": "true"
+  bgpInstances:
+  - name: "instance-65001"
+    localASN: 65001
+    peers:
+    - name: "tor-switch"
+      peerASN: 65000
+      peerAddress: 192.168.10.200  # router ip address
+      peerConfigRef:
+        name: "service2-cilium-peer"
+EOF
+
+watch "vtysh -c 'show ip route bgp'"
+B>* 172.16.1.1/32 [20/0] via 192.168.10.100, eth1, weight 1, 00:02:22
+  *                      via 192.168.10.101, eth1, weight 1, 00:02:22
+B>* 172.20.0.0/24 [20/0] via 192.168.10.100, eth1, weight 1, 00:03:49
+B>* 172.20.1.0/24 [20/0] via 192.168.10.101, eth1, weight 1, 00:03:49
+B>* 172.20.2.0/24 [20/0] via 192.168.20.100, eth2, weight 1, 00:00:30
+
+kubectl label service netshoot-web az2=true
+B>* 172.16.1.1/32 [20/0] via 192.168.10.100, eth1, weight 1, 00:02:54
+  *                      via 192.168.10.101, eth1, weight 1, 00:02:54
+B>* 172.16.1.2/32 [20/0] via 192.168.20.100, eth2, weight 1, 00:00:09
+B>* 172.20.0.0/24 [20/0] via 192.168.10.100, eth1, weight 1, 00:04:21
+B>* 172.20.1.0/24 [20/0] via 192.168.10.101, eth1, weight 1, 00:04:21
+B>* 172.20.2.0/24 [20/0] via 192.168.20.100, eth2, weight 1, 00:01:02
+
+kubectl patch service netshoot-web -p '{"spec":{"externalTrafficPolicy":"Local"}}'
+kubectl scale deployment netshoot-web --replicas 1
+B>* 172.16.1.1/32 [20/0] via 192.168.10.100, eth1, weight 1, 00:03:25
+  *                      via 192.168.10.101, eth1, weight 1, 00:03:25
+B>* 172.20.0.0/24 [20/0] via 192.168.10.100, eth1, weight 1, 00:04:52
+B>* 172.20.1.0/24 [20/0] via 192.168.10.101, eth1, weight 1, 00:04:52
+B>* 172.20.2.0/24 [20/0] via 192.168.20.100, eth2, weight 1, 00:01:33
+
+kubectl label nodes k8s-w1 az2=true
+B>* 172.16.1.1/32 [20/0] via 192.168.10.100, eth1, weight 1, 00:04:17
+  *                      via 192.168.10.101, eth1, weight 1, 00:04:17
+B>* 172.20.0.0/24 [20/0] via 192.168.10.100, eth1, weight 1, 00:05:44
+B>* 172.20.1.0/24 [20/0] via 192.168.10.101, eth1, weight 1, 00:05:44
+B>* 172.20.2.0/24 [20/0] via 192.168.20.100, eth2, weight 1, 00:02:25
+
+kubectl label nodes k8s-w1 az1-
+B>* 172.16.1.1/32 [20/0] via 192.168.10.100, eth1, weight 1, 00:00:10
+B>* 172.20.0.0/24 [20/0] via 192.168.10.100, eth1, weight 1, 00:06:08
+B>* 172.20.1.0/24 [20/0] via 192.168.10.101, eth1, weight 1, 00:00:07
+B>* 172.20.2.0/24 [20/0] via 192.168.20.100, eth2, weight 1, 00:02:49
+
+kubectl get node -l az1=true
+kubectl get node -l az2=true
+NAME      STATUS   ROLES           AGE   VERSION
+k8s-ctr   Ready    control-plane   58m   v1.33.2
+
+NAME     STATUS   ROLES    AGE   VERSION
+k8s-w0   Ready    <none>   54m   v1.33.2
+k8s-w1   Ready    <none>   56m   v1.33.2
+```
 
 ## Kind
 Kind 설치 및 유용한 플러그인 설치
