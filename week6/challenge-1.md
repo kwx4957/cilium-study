@@ -1,0 +1,3 @@
+- `도전과제1-1` Ingress **Host network** mode - [Docs](https://docs.cilium.io/en/stable/network/servicemesh/ingress/#host-network-mode)
+- `도전과제1-2` Ingress gRPC Example : arm64 CPU 미지원 - [Docs](https://docs.cilium.io/en/stable/network/servicemesh/grpc/)
+- `도전과제1-3` **Defaults certificate** for Ingresses - [Docs](https://docs.cilium.io/en/stable/network/servicemesh/tls-default-certificate/)
