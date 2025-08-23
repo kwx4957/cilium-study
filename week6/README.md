@@ -1905,3 +1905,28 @@ Aug 23 18:38:49.003: default/client2-c97ddf6cf-ln6m7:48970 (ID:1360) -> default/
 Aug 23 18:38:49.005: default/client2-c97ddf6cf-ln6m7:48970 (ID:1360) -> default/echo-service-1-867d69c679-bzdqs:8080 (ID:14334) http-request DROPPED (HTTP/1.1 GET http://echo-service-1:8080/bar)
 Aug 23 18:38:49.008: default/client2-c97ddf6cf-ln6m7:48970 (ID:1360) -> default/echo-service-1:8080 (world) to-proxy FORWARDED (TCP Flags: ACK, FIN)
 ```
+
+## [Gwctl](https://github.com/kubernetes-sigs/gwctl)
+gateway, route 간 리소스 시각화
+```sh
+# go 설치 
+sudo apt-get install make
+wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
+rm -rf /usr/local/go && tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
+go version
+
+# gwctl 설치 
+git clone https://github.com/kubernetes-sigs/gwctl.git && cd gwctl
+make build
+export PATH="${PWD}/bin:${PATH}"
+gwctl help
+
+# Graph centered on a gateway
+gwctl get gateway http-app-1 -o graph
+
+# Graph centered on an HTTPRoute
+gwctl get httproute http-app-1 -o graph
+
+# 출력되는 DTO 데이터들은 DOT graph render 사이트에서 그래프형태로 변환할수 있따.
+```
