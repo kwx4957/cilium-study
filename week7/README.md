@@ -353,24 +353,27 @@ topk(5, avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium", pod=~"$pod"}[5m])) b
 # 프로메테우스
 topk(5, avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m])) by (pod, map_name, operation))
 
+# cilium에서 사용되는 eBPF 맵의 총 작업(update, delete) 그리고 해당 작업에 대한 결과 success or fail 
 cilium_bpf_map_ops_total
 cilium_bpf_map_ops_total{k8s_app="cilium"}
-cilium_bpf_map_ops_total{k8s_app="cilium", pod="cilium-4hghz"}
+
+# 특정 cilium 파드의 총 작업 조회
+cilium_bpf_map_ops_total{k8s_app="cilium", pod="cilium-9g2kr"}
 
 # 최근 5분 간의 데이터로 증가율 계산
-rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m]) # Graph 확인
+rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m]) 
 
 # 여러 시계열(metric series)의 값의 평균
 avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m]))
 
 # 집계 함수(예: sum, avg, max, rate)와 함께 사용하여 어떤 레이블(label)을 기준으로 그룹화할지를 지정하는 그룹핑(grouping) 
-avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m])) by (pod)
-avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m])) by (pod, map_name)
-avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m])) by (pod, map_name, operation) # Graph 확인
+avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m])) by (pod) # 파드별 
+avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m])) by (pod, map_name) # 파드, 맵
+avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m])) by (pod, map_name, operation) # 파드, 맵, 수행 동작
 
 # 시계열 중에서 가장 큰 k개를 선택
 topk(5, avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium"}[5m]))) by (pod, map_name, operation)
-topk(5, avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium", pod="cilium-4hghz"}[5m]))) by (pod, map_name, operation)
+topk(5, avg(rate(cilium_bpf_map_ops_total{k8s_app="cilium", pod="cilium-9g2kr"}[5m]))) by (pod, map_name, operation)
 ```
 
 **iperf3**
