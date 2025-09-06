@@ -784,6 +784,7 @@ policy-secrets-only-from-secrets-namespace        true
 
 ### tls Interception  
 https://docs.cilium.io/en/stable/security/tls-visibility/#deploy-the-demo-application
+
 ```sh
 cat << EOF > dns-sw-app.yaml
 apiVersion: v1
