@@ -275,6 +275,6 @@ EOF
 ```
 
 
-[DVWA](https://github.com/digininja/DVWA)
-[Tetragon-example](https://github.com/cilium/tetragon/tree/main/examples)
-[Blog](https://holdmybeersecurity.com/2024/07/24/making-damn-vulnerable-web-application-dvwa-almost-unhackable-with-cilium-and-tetragon/#more-11582)
+[DVWA](https://github.com/digininja/DVWA)    
+[Tetragon-example](https://github.com/cilium/tetragon/tree/main/examples)  
+[Blog](https://holdmybeersecurity.com/2024/07/24/making-damn-vulnerable-web-application-dvwa-almost-unhackable-with-cilium-and-tetragon/#more-11582)  

@@ -1,4 +1,4 @@
-## [Cilium Study 1기] 8주차 정리(진행중)
+## [Cilium Study 1기] 8주차 정리
 > 본 내용은 CloudNet@ Cilium Study 1기 8주차 스터디에 대한 정리 글입니다. 
 
 ```sh
@@ -6,15 +6,18 @@ vagrant up
 
 vagrant ssh k8s-ctr
 
-http://192.168.10.100:30001 # 프로메테우스 접속
-http://192.168.10.100:30002  # 그라파나 접속
-http://192.168.10.100:30003 # 허블 UI 접속
+# 프로메테우스
+http://192.168.10.100:30001 
+# 그라파나
+http://192.168.10.100:30002  
+# 허블 UI
+http://192.168.10.100:30003  
 
 vagrant destroy && rm -rf .vagrant
 ```
 
-## Cilium Security
-[cilium 기본 보안 정책](https://docs.cilium.io/en/stable/security/network/policyenforcement/#default-security-policy)
+## [Cilium Security](https://docs.cilium.io/en/stable/security/network/policyenforcement/#default-security-policy)
+
 - 정책이 설정되지 않은 경우 모든 통신이 허용되지만, 정책이 설정되는 순간 모든 통신은 거부된다.
 
 ```sh
@@ -65,6 +68,7 @@ k get ciliumidentities.cilium.io 19366 -o yaml | yq
   }
 }
 
+# id에 대한 라벨 
 k exec -it -n kube-system ds/cilium -- cilium identity list
 19366   k8s:app.kubernetes.io/instance=metrics-server
         k8s:app.kubernetes.io/name=metrics-server
@@ -73,18 +77,19 @@ k exec -it -n kube-system ds/cilium -- cilium identity list
         k8s:io.cilium.k8s.policy.serviceaccount=metrics-server
         k8s:io.kubernetes.pod.namespace=kube-system
 
+# 라벨 조회
 K get pod -n kube-system -l app.kubernetes.io/name=metrics-server --show-labels
 metrics-server-5dd7b49d79-6hfhb   1/1     Running   0          57m   app.kubernetes.io/instance=metrics-server,app.kubernetes.io/name=metrics-server,pod-template-hash=5dd7b49d79
 
-# 레이블을 새롭게 수정 
+# 레이블을 새롭게 추가
 kubectl label pods -n kube-system -l app.kubernetes.io/name=metrics-server study=8w
 
-# 보안 ID가 수정되는 것을 확인할 수 있따.
+# ID가 수정되는 것을 확인할 수 있따.
 k get ciliumendpoints.cilium.io -n kube-system
 metrics-server-5dd7b49d79-6hfhb   18949               ready            172.20.0.230
 
 # 더욱 신기한 점은 보안 ID는 수정되었으나 리스트에는 아직 존재한다.
-# 즉 메트릭 서버가 19366과 18949를 동시에 적용되고 있다.
+# 즉 메트릭 서버에 대한 id가 새롭게 추가되었다.
 k exec -it -n kube-system ds/cilium -- cilium identity list
 18949   k8s:app.kubernetes.io/instance=metrics-server
         k8s:app.kubernetes.io/name=metrics-server
@@ -100,7 +105,7 @@ k exec -it -n kube-system ds/cilium -- cilium identity list
         k8s:io.cilium.k8s.policy.serviceaccount=metrics-server
         k8s:io.kubernetes.pod.namespace=kube-system
 
-
+# 레이블 수정
 k edit deploy -n kube-system metrics-server
 ...
   template:
@@ -121,7 +126,7 @@ k exec -it -n kube-system ds/cilium -- cilium identity list
         k8s:io.cilium.k8s.policy.serviceaccount=metrics-server
         k8s:io.kubernetes.pod.namespace=kube-system
 
-# ciliium 관리하는 모든 ep에는 ID가 할당된다. 이중 reserved는 예약된 ID를 의미한다.
+# ciliium 관리하는 모든 엔드포인트에는 ID가 할당된다. 이중 reserved는 예약된 ID를 의미한다.
 k exec -it -n kube-system ds/cilium -- cilium identity list
 1       reserved:host
         reserved:kube-apiserver
@@ -136,7 +141,6 @@ k exec -it -n kube-system ds/cilium -- cilium identity list
 9       reserved:world-ipv4
 10      reserved:world-ipv6
 ```
-
 
 ## DNS 기반 보안 정책 
 ```sh
@@ -424,7 +428,7 @@ c2 fqdn names
   ]
 }
 
-# 성공
+# 요청 성공
 k exec mediabot -- curl -I -s https://support.github.com | head -1
 HTTP/2 302
 
@@ -444,8 +448,10 @@ kubectl delete cnp fqdn
 ```
 
 ## WireGuard
-- 동일 노드 내에서 파드간 통신시에는 암호화되지 않는다.
-- WireGuard는 UDP port 51871로 통신한다.
+- 동일 노드 내에서 파드 간 통신에는 암호화되지 않는다.
+  - 터널링 모드에서는 2번의 캡슐화가 이뤄진다.
+- WireGuard는 UDP, port 51871로 통신한다.
+- 각 노드는 자체 암호화 키 쌍을 생성해 `CiliumNode`에 `network.cilium.io/wg-pub-key`으로 공개 키를 주고 받는다.
 
 ```sh
 # 샘플 애플리케이션 배포 및 동작 확인
@@ -649,7 +655,6 @@ interface: cilium_wg0
 peer: kkmwNHmH8/nXfN/5jP8Z2iVy2aT7W4SB7njkWPsT4xU=
   endpoint: 192.168.10.101:51871
   allowed ips: 172.20.1.128/32, 172.20.1.145/32, 192.168.10.101/32, 172.20.1.140/32, 172.20.1.230/32, 172.20.1.0/24
-
 peer: PzxxFD9rvKzC3pqk914qaBRLp7FZqZ7ajNqbOmhBqiY=
   endpoint: 192.168.10.102:51871
   allowed ips: 172.20.2.30/32, 192.168.10.102/32, 172.20.2.80/32, 172.20.2.42/32, 172.20.2.0/24
@@ -673,6 +678,7 @@ cilium_wg0      kkmwNHmH8/nXfN/5jP8Z2iVy2aT7W4SB7njkWPsT4xU=    0       0
 cilium_wg0      PzxxFD9rvKzC3pqk914qaBRLp7FZqZ7ajNqbOmhBqiY=    0       0
 
 
+# 공개 키 조회
 k get cn -o yaml | grep annotations -A1
   annotations:
     network.cilium.io/wg-pub-key: NI1mGHWb5nR/3l+s+3JwDExK0qk6601GKlzDzQhHFHs=
@@ -741,18 +747,18 @@ k exec -it -n kube-system ds/cilium -- cilium encrypt status
 Encryption:              Disabled
 ```
 
-## Inspecting TLS Encrypted Connections with Cilium
+## [Inspecting TLS Encrypted Connections with Cilium](https://docs.cilium.io/en/stable/security/tls-visibility/)
+![](https://docs.cilium.io/en/stable/_images/cilium-tls-interception.png)
 
-https://docs.cilium.io/en/stable/security/tls-visibility/
-https 트래픽을 통제화하기 위한 방식
-인증서에 대한 처리 필요 
+https 트래픽을 통제하기 위한 방식으로 인증서에 대한 처리가 필요하다. 이러한 요청 처리를 envoy가 담당한다. `NPDS`과 `SDS` 중 `SDS`를 권장한다.
 
-1. terminatio
-2. clinet로 동작
-3. 외부 통신
+동작 과정
+1. 내부 인증 기관(CA) 생성 및 CA 개인키 and CA 인증서 생성
+2. TLS 검사 대상(http.bing)으로 개인 및 인증서 서명 요청 
+3. CA 개인 키를 활용한 서명된 인증서 생성
+4. tls가 동작하는 클라이언트에서 CA를 신뢰
+5. cilium에게 신뢰가능한 ca 집한 정보 제공 
 
-인증성를 envoy로 전달한다.
-방식 sds이 권장
 
 ```sh
 k get all,secret,cm -n cilium-secrets
@@ -782,8 +788,7 @@ policy-secrets-namespace                          cilium-secrets
 policy-secrets-only-from-secrets-namespace        true
 ```
 
-### tls Interception  
-https://docs.cilium.io/en/stable/security/tls-visibility/#deploy-the-demo-application
+### [tls Interception](https://docs.cilium.io/en/stable/security/tls-visibility/#deploy-the-demo-application)
 
 ```sh
 cat << EOF > dns-sw-app.yaml
@@ -819,16 +824,13 @@ HTTP/2 200
 k exec mediabot -- curl -I -s --max-time 5 https://support.github.com | head -1
 HTTP/2 302
 
-# 내부 인증기관 생성
+# 1. 내부 인증기관 생성
+## CA 개인 키 생성
 openssl genrsa -des3 -out myCA.key 2048
 Enter PEM pass phrase: qwer1234
 Verifying - Enter PEM pass phrase: qwer1234
 
-# 키 조회
-ls *.key
-myCA.key
-
-# 
+## CA 인증서 생성  
 openssl req -x509 -new -nodes -key myCA.key -sha256 -days 1825 -out myCA.crt
 Enter pass phrase for myCA.key: qwer1234
 Country Name (2 letter code) [AU]:kr
@@ -839,11 +841,15 @@ Organizational Unit Name (eg, section) []:study
 Common Name (e.g. server FQDN or YOUR name) []:clond.net
 Email Address []:
 
-# crt 조회
+## 개인 키 조회
+ls *.key
+myCA.key
+
+## 인증서 조회
 ls *.crt
 myCA.crt
 
-# CA 인증서 및 
+## CA 정보 조회
 openssl x509 -in myCA.crt -noout -text
 Issuer: C = kr, ST = seoul, L = seoul, O = clod, OU = study, CN = clond.net
         Validity
@@ -853,22 +859,24 @@ Issuer: C = kr, ST = seoul, L = seoul, O = clod, OU = study, CN = clond.net
         X509v3 Basic Constraints: critical
                 CA:TRUE
 
-# 개인 키 생성
+# 2. TLS 검사 대상(http.bing)으로 개인 및 인증서 서명 요청 
+## 개인 키 생성
 openssl genrsa -out internal-httpbin.key 2048
 
 ls internal-httpbin.key
 internal-httpbin.key
 
-# 인증서 서명 요청
+## 인증서 생성
 openssl req -new -key internal-httpbin.key -out internal-httpbin.csr
 Common Name (e.g. server FQDN or YOUR name) []:httpbin.org
 
-# 서명 인증서 생성
+# 3. CA를 활용 서명된 인증서 생성
 openssl x509 -req -days 360 -in internal-httpbin.csr -CA myCA.crt -CAkey myCA.key -CAcreateserial -out internal-httpbin.crt -sha256
 Certificate request self-signature ok
 subject=C = KR, ST = Seoul, L = Seoul, O = cloudneta, OU = study, CN = httpbin.org
 Enter pass phrase for myCA.key: qwer1234
 
+## 인증서 조회
 ls internal-httpbin.crt
     Issuer: C = kr, ST = seoul, L = seoul, O = clod, OU = study, CN = clond.net
     Validity
@@ -876,29 +884,38 @@ ls internal-httpbin.crt
         Not After : Aug 27 05:16:10 2026 GMT
     Subject: C = kr, ST = seoul, L = seoul, O = cloundnet, OU = study, CN = httpbin.org
 
-# 시크릿 생성
+## 시크릿 생성
 k create secret tls httpbin-tls-data -n kube-system --cert=internal-httpbin.crt --key=internal-httpbin.key
 k get secret -n kube-system  httpbin-tls-data
 
+# 4. 클라이언트 파드에서 내부 CA를 신뢰할수 있는 CA로 추가 
 k exec -it mediabot -- ls -l /usr/local/share/ca-certificates/
 total 0
 
-# 파드 내에서 신뢰할수 잇는 CA로 내부 CA 추가
+## 클라이언트 파드 내에서 신뢰할수 잇는 CA로 내부 CA 추가
 k cp myCA.crt default/mediabot:/usr/local/share/ca-certificates/myCA.crt
+
+## CA 인증서 조회
 k exec -it mediabot -- ls -l /usr/local/share/ca-certificates/
 -rw-r--r-- 1 root root 1318 Sep  1 05:17 myCA.crt
 
+## 사이즈 및 생성 날짜 조회
 k exec -it mediabot -- ls -l /etc/ssl/certs/ca-certificates.crt
 -rw-r--r-- 1 root root 213777 Jan  9  2024 /etc/ssl/certs/ca-certificates.crt
 
-# 인증서 최신 업데이트
+## 신뢰할수 있는 인증기관 추가에 대한 업데이트
 k exec mediabot -- update-ca-certificates
+
+## 사이즈 및 생성 날짜 조회
 k exec -it mediabot -- ls -l /etc/ssl/certs/ca-certificates.crt
 -rw-r--r-- 1 root root 215095 Sep  1 05:18 /etc/ssl/certs/ca-certificates.crt
 
-# cilium이 신뢰할수 있는 CA 목록 제공
+# 5. cilium이 신뢰할수 있는 CA 목록 제공
 k cp default mediabot:/etc/ssl/certs/ca-certificates.crt ca-certificates.crt
+
+## 시크릿 생성 
 k create secret generic tls-orig-data -n kube-system --from-file=ca.crt=./ca-certificates.crt
+
 k get secret -n kube-system tls-orig-data
 NAME            TYPE     DATA   AGE
 tls-orig-data   Opaque   1      8s
@@ -925,7 +942,7 @@ k exec -it mediabot -- curl -sL 'https://httpbin.org/anything'
   "url": "https://httpbin.org/anything"
 }
 
-# 인증서 정보 출력
+## 인증서 정보 출력
 k exec -it mediabot -- curl -sL 'https://httpbin.org/headers' -v
 * Server certificate:
 *  subject: CN=httpbin.org
@@ -935,7 +952,7 @@ k exec -it mediabot -- curl -sL 'https://httpbin.org/headers' -v
 *  issuer: C=US; O=Amazon; CN=Amazon RSA 2048 M03
 *  SSL certificate verify ok. '
 
-# 정책 적용
+## 정책 적용
 k create -f https://raw.githubusercontent.com/cilium/cilium/1.18.1/examples/kubernetes-tls-inspection/l7-visibility-tls.yaml
 
 k get cnp
@@ -944,14 +961,14 @@ l7-visibility-tls   4s    True
 
 hubble observe --pod mediabot -f
 
-# https임에도 불과하고 L7 정보가 담겨있는 것을 확인할 수 있다.
+## https임에도 불과하고 L7 정보가 담겨있는 것을 확인할 수 있다.
 k exec -it mediabot -- curl -sL 'https://httpbin.org/anything'
 ...
 Sep  1 05:26:31.879: default/mediabot:57502 (ID:14979) -> httpbin.org:443 (ID:16777217) http-request FORWARDED (HTTP/1.1 GET https://httpbin.org/anything)
 Sep  1 05:26:32.455: default/mediabot:57502 (ID:14979) <- httpbin.org:443 (ID:16777217) http-response FORWARDED (HTTP/1.1 200 576ms (GET https://httpbin.org/anything))
 ...
 
-# 서버 인증서 정보 확인
+## 서버 인증서 정보 확인
 k exec -it mediabot -- curl -sL 'https://httpbin.org/headers' -v
 * Server certificate:
 *  subject: C=kr; ST=seoul; L=seoul; O=cloundnet; OU=study; CN=httpbin.org
@@ -961,7 +978,7 @@ k exec -it mediabot -- curl -sL 'https://httpbin.org/headers' -v
 *  issuer: C=kr; ST=seoul; L=seoul; O=clod; OU=study; CN=clond.net
 *  SSL certificate verify ok.
 
-# 정책 리소스 및 시크릿 삭제 
+## 정책 리소스 및 시크릿 삭제 
 k delete -f https://raw.githubusercontent.com/cilium/cilium/1.18.1/examples/kubernetes-dns/dns-sw-app.yaml
 k delete cnp l7-visibility-tls
 k delete secret -n kube-system tls-orig-data
